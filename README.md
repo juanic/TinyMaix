@@ -6,14 +6,14 @@ TinyMaix is a tiny inference Neural Network library specifically for microcontro
 We design it follow the rule:  **Easy-to-Use** > **Portable** > **Speed** > **Space**  
 
 Introduction to tinyML: [**TinyML**](tinyml_intro.md)  
-See tested chips and benchmark:  [**benchmark**](benchmark.md)  
+See tested **48** chips and benchmark:  [**benchmark**](benchmark.md)  
 Good News:  [**Rewarded Porting TinyMaix**](reward.md)
 
 **Highlights**
 - Core Code less than **400 lines**(tm_layers.c+tm_model.c+arch_cpu.h), code .text section less than **3KB**   
 - Low ram consume, even **Arduino ATmega328** (32KB Flash, 2KB Ram) can run mnist with TinyMaix~  
 - Support **INT8/FP32/FP16** model, experimentally support **FP8**, convert from keras h5 or tflite.
-- Supoort multi architecture accelerate:  **ARM SIMD/NEON/MVEI，RV32P, RV64V** ~
+- Supoort multi architecture accelerate:  **ARM SIMD/NEON/MVEI，RV32P, RV64V, CSKYV2, X86 SSE2** ~
 - User-friendly interfaces, just load/run models~
 - Support Full Static Memory config
 - [MaixHub](https://maixhub.com) **Online Model Training** support
@@ -65,9 +65,10 @@ mnist demo
 
 ## TODO List
 1. ~~optimize tm_layers.c to tm_layers_O1.c, aimed to speed up to 1.4~2.0X~~  Done
-2. Train good backbone for 64KB/128KB/256KB/512KB ram litmit
-3. Add example: Detector,KWS,HAR,Gesture,OCR,...
-4. ...
+2. ~~Add "ADD" OPS to support resnet/mbnet v2 ~~ Done!
+3. Train good backbone for 64KB/128KB/256KB/512KB ram litmit
+4. Add example: Detector,KWS,HAR,Gesture,OCR,...
+5. ...
 
 Do you want take participate in development of TinyMaix, or discuss with TinyML hobbyist?  
 **Join our telegram group:** https://t.me/tinymaix
@@ -92,6 +93,7 @@ We hope TinyMaix can help any MCU run AI Neural Network Mdoels, every one can po
 - [x] Support up to mobilenet v1, RepVGG backbone
   - they are most common used, efficient structure for MCUs
   - [x] Basic Conv2d, dwConv2d, FC, Relu/Relu6/Softmax, GAP, Reshape
+  - [x] ADD (for resnet,mbnet v2 struct, experimental)
   - [ ] MaxPool, AvgPool (now use stride instead)
 - [x] FP32 model, INT8 quant model, FP16 model(**NEW**)
 - [x] Convert tmdl from keras h5 or tflite
@@ -274,10 +276,25 @@ You can download models from [MaixHub](https://maixhub.com) or train your AI mod
 
 ## How to add new platform acceleration code
 
-TinyMaix use basic dot_product function to accelerate Conv computing.  
-You just need add arch_xxx_yyy.h in src dir, and implement your platform's dot_product function:
+For new platforms, you just need add arch_xxx.h to src dir, and implement functions inside.   
+Here is the main functions you need implement (sort by importance):
+
 ```
-TM_INLINE void tm_dot_prod(mtype_t* sptr, mtype_t* kptr,uint32_t size, sumtype_t* result);
+a. TM_INLINE void tm_dot_prod(mtype_t* sptr, mtype_t* kptr,uint32_t size, sumtype_t* result)
+	implement platform's dot product functions, usually use MAC related instructions. 
+
+b. TM_INLINE void tm_dot_prod_pack2(mtype_t* sptr, mtype_t* kptr, uint32_t size, sumtype_t* result)
+	implement platform's dual channel dot product functions  
+  (not 4 or more channel, because some chip platform's register is not enough to support more channels)
+
+c. TM_INLINE void tm_postprocess_sum(int n, sumtype_t* sums, btype_t* bs, int act, mtype_t* outp, sctype_t* scales, sctype_t out_s, zptype_t out_zp)
+	implement platform's batch postprocess functions, note n is power of 2.
+
+d. TM_INLINE void tm_dot_prod_3x3x1(mtype_t* sptr, mtype_t* kptr, sumtype_t* result)
+	implement platform 3x3 dot product. mostly use handwrite cpu code.
+  
+e. TM_INLINE void tm_dot_prod_gap_3x3x1(mtype_t* sptr, mtype_t* kptr, uint32_t* k_oft, sumtype_t* result)
+	implement platform 3x3 gap dot product. 
 ```
 
 ...

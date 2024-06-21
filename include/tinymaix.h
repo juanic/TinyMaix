@@ -26,6 +26,11 @@ limitations under the License.
 #define  TM_MDL_FP8_152 5 //experimental
 #include "tm_port.h"
 
+#ifndef TM_STATIC
+// Set default value, if not defined in tm_port.h
+#define TM_STATIC static
+#endif
+
 /******************************* MARCO ************************************/
 #define TM_MDL_MAGIC 'XIAM'     //mdl magic sign
 #define TM_ALIGN_SIZE   (8)     //8 byte align
@@ -111,6 +116,7 @@ typedef enum{
     TML_SOFTMAX   = 3,
     TML_RESHAPE   = 4,
     TML_DWCONV2D  = 5,
+    TML_ADD       = 6,
     TML_MAXCNT    ,
 }tm_layer_type_t;
 
@@ -149,8 +155,8 @@ typedef struct{
     uint16_t input_cnt;     //only support 1 yet
     uint16_t output_cnt;    //only support 1 yet
     uint16_t layer_cnt;     
-    uint32_t buf_size;      //main buf size for middle result
-    uint32_t sub_size;      //sub buf size for middle result
+    uint32_t buf_size;      //main buf size for middle result = pingpong+keep
+    uint32_t sub_size;      //pingpong buf size;
     uint16_t in_dims[4];    //0:dims; 1:dim0; 2:dim1; 3:dim2
     uint16_t out_dims[4];
     uint8_t  reserve[28];   //reserve for future
@@ -269,6 +275,13 @@ typedef struct{
     //      fused in advance (when convert model)
 }tml_dwconv2d_t;
 
+typedef struct{
+    tml_head_t h;
+    uint32_t in_oft1;
+    sctype_t in_s1;          //input scale, 
+    zptype_t in_zp1;         //input zeropoint
+    uint32_t reserve;        //align8
+}tml_add_t;
 
 
 /******************************* TYPE ************************************/
@@ -296,7 +309,8 @@ tm_err_t tml_fc(tm_mat_t* in, tm_mat_t* out,  wtype_t* w, btype_t* b, \
     sctype_t* ws, sctype_t in_s, zptype_t in_zp, sctype_t out_s, zptype_t out_zp);
 tm_err_t tml_softmax(tm_mat_t* in, tm_mat_t* out, sctype_t in_s, zptype_t in_zp, sctype_t out_s, zptype_t out_zp);
 tm_err_t tml_reshape(tm_mat_t* in, tm_mat_t* out, sctype_t in_s, zptype_t in_zp, sctype_t out_s, zptype_t out_zp);
-
+tm_err_t tml_add(tm_mat_t* in0, tm_mat_t* in1, tm_mat_t* out, \
+    sctype_t in_s0, zptype_t in_zp0, sctype_t in_s1, zptype_t in_zp1, sctype_t out_s, zptype_t out_zp);
 
 /******************************* STAT FUNCTION ************************************/
 #if TM_ENABLE_STAT
@@ -304,25 +318,30 @@ tm_err_t tm_stat(tm_mdlbin_t* mdl);                    //stat model
 #endif
 
 /******************************* UTILS FUNCTION ************************************/
-uint8_t __attribute__((weak)) tm_fp32to8(float fp32);
-float __attribute__((weak)) tm_fp8to32(uint8_t fp8);
+uint8_t TM_WEAK tm_fp32to8(float fp32);
+float TM_WEAK tm_fp8to32(uint8_t fp8);
 
 
 /******************************* UTILS  ************************************/
+
 #define TML_GET_INPUT(mdl,lh)   ((mtype_t*)((mdl)->buf + (lh)->in_oft))
 #define TML_GET_OUTPUT(mdl,lh)  ((mtype_t*)((mdl)->buf + (lh)->out_oft))
 #if (TM_MDL_TYPE == TM_MDL_INT8)||(TM_MDL_TYPE == TM_MDL_INT16)
     #define TML_DEQUANT(lh, x)       (((sumtype_t)(x)-((lh)->out_zp))*((lh)->out_s))
+    #define TM_DEQUANT(i8,s,zp) (((sumtype_t)(i8)-(zp))*(s))
+    #define TM_QUANT(fp32,s,zp) ((mtype_t)((fp32)/(s)+zp))
 #elif (TM_MDL_TYPE == TM_MDL_FP8_143) || (TM_MDL_TYPE == TM_MDL_FP8_152)
-    #define TML_DEQUANT(lh, x)       (tm_fp8to32(x))
+    #define TML_DEQUANT(lh, x)  (tm_fp8to32(x))
 #else   //FP32,FP16
-    #define TML_DEQUANT(lh, x)       ((float)(x))
+    #define TML_DEQUANT(lh, x)  ((float)(x))
+    #define TM_DEQUANT(x,s,zp)  (x)
+    #define TM_QUANT(x,s,zp)    (x)
 #endif
 
 /******************************* LOCAL MATH FUNCTION  ************************************/
 #if TM_LOCAL_MATH
 //http://www.machinedlearnings.com/2011/06/fast-approximate-logarithm-exponential.html
-    inline float _exp(float x) {
+static inline float _exp(float x) {
         float p = 1.442695040f * x;
         uint32_t i = 0;
         uint32_t sign = (i >> 31);

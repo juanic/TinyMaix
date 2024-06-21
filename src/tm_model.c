@@ -14,13 +14,13 @@ limitations under the License.
 //load model
 //mdl: model handle; bin: model bin buf; buf: main buf for middle output; cb: layer callback; 
 //in: return input mat, include buf addr; //you can ignore it if use static buf
-tm_err_t __attribute__((weak)) tm_load  (tm_mdl_t* mdl, const uint8_t* bin, uint8_t*buf, tm_cb_t cb, tm_mat_t* in)
+tm_err_t TM_WEAK tm_load  (tm_mdl_t* mdl, const uint8_t* bin, uint8_t*buf, tm_cb_t cb, tm_mat_t* in)
 {
     tm_mdlbin_t* mdl_bin = (tm_mdlbin_t*)bin;
     if(mdl_bin->magic != TM_MDL_MAGIC)   return TM_ERR_MAGIC;   //FIXME: big-endian not compatible
     if(mdl_bin->mdl_type != TM_MDL_TYPE) return TM_ERR_MDLTYPE;
     mdl->b          = mdl_bin;
-    mdl->cb         = (void*)cb; 
+    mdl->cb         = (void*)cb;
     if(buf == NULL) {
         mdl->buf        = (uint8_t*)tm_malloc(mdl->b->buf_size);
         if(mdl->buf == NULL) return TM_ERR_OOM;
@@ -41,15 +41,14 @@ tm_err_t __attribute__((weak)) tm_load  (tm_mdl_t* mdl, const uint8_t* bin, uint
 }
 
 //remove model
-void __attribute__((weak)) tm_unload(tm_mdl_t* mdl)               
+void TM_WEAK tm_unload(tm_mdl_t* mdl)
 {
     if(mdl->main_alloc) tm_free(mdl->buf);
-    if(mdl->subbuf) tm_free(mdl->subbuf);
     return;
 }
 
 //preprocess data input
-tm_err_t __attribute__((weak)) tm_preprocess(tm_mdl_t* mdl, tm_pp_t pp_type, tm_mat_t* in, tm_mat_t* out)
+tm_err_t TM_WEAK tm_preprocess(tm_mdl_t* mdl, tm_pp_t pp_type, tm_mat_t* in, tm_mat_t* out)
 {
     tml_head_t* l0h = (tml_head_t*)mdl->b->layers_body;
     sctype_t in_s = l0h->in_s;
@@ -68,7 +67,7 @@ tm_err_t __attribute__((weak)) tm_preprocess(tm_mdl_t* mdl, tm_pp_t pp_type, tm_
 #else
     case TMPP_UINT2FP01:
         for(int i=0; i<in_size; i++)
-            out->data[i] = (((uint8_t*)(in->data))[i])/255.0; 
+            out->data[i] = (((uint8_t*)(in->data))[i])/255.0;
         break;
     case TMPP_UINT2FPN11:
         for(int i=0; i<in_size; i++)
@@ -85,9 +84,9 @@ tm_err_t __attribute__((weak)) tm_preprocess(tm_mdl_t* mdl, tm_pp_t pp_type, tm_
 
 //run model
 //mdl: model handle; in: input mat; out: output mat
-tm_err_t __attribute__((weak)) tm_run(tm_mdl_t* mdl, tm_mat_t* in, tm_mat_t* out)
+tm_err_t TM_WEAK tm_run(tm_mdl_t* mdl, tm_mat_t* in, tm_mat_t* out)
 {
-    tm_mat_t _in, _out;
+    tm_mat_t _in, _in1, _out;
     tm_err_t res = TM_OK;
     int out_idx = 0;
     memcpy((void*)&_in, (void*)in, sizeof(tm_mat_t));       
@@ -125,6 +124,12 @@ tm_err_t __attribute__((weak)) tm_run(tm_mdl_t* mdl, tm_mat_t* in, tm_mat_t* out
         case TML_RESHAPE: {
             tml_reshape_t* l = (tml_reshape_t*)(mdl->layer_body);
             res = tml_reshape(&_in, &_out, h->in_s, h->in_zp, h->out_s, h->out_zp);
+            break; }
+        case TML_ADD: {
+            tml_add_t* l = (tml_add_t*)(mdl->layer_body);
+            memcpy((void*)&_in1, (void*)(h->in_dims), sizeof(uint16_t)*4);
+            _in1.data = (mtype_t *)(mdl->buf + l->in_oft1);
+            res = tml_add(&_in, &_in1, &_out, h->in_s, h->in_zp, l->in_s1, l->in_zp1, h->out_s, h->out_zp);
             break; }
         default:
             res = TM_ERR_LAYERTYPE;
